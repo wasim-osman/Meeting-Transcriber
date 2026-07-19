@@ -22,15 +22,51 @@ final class ModelManager: ObservableObject {
 
     func isModelDownloaded(_ name: String) -> Bool {
         guard let base = modelsBase else { return false }
-        let dir = base.appending(path: "models/argmaxinc/whisperkit-coreml/\(name)")
-        guard FileManager.default.fileExists(atPath: dir.path) else { return false }
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        return contents.contains { $0.hasSuffix(".mlmodelc") || $0.hasSuffix(".mlpackage") }
+        let root = base.appending(path: "models/argmaxinc/whisperkit-coreml")
+        guard let subdirs = try? FileManager.default.contentsOfDirectory(atPath: root.path) else { return false }
+        for sub in subdirs where normalizeModelFolder(sub) == name {
+            let dir = root.appendingPathComponent(sub)
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            if contents.contains(where: { $0.hasSuffix(".mlmodelc") || $0.hasSuffix(".mlpackage") }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// WhisperKit stores variants under folder names like
+    /// `openai_whisper-large-v3-v20240930`; map those back to the short
+    /// variant name (e.g. `large-v3`) used in the UI / model list.
+    private func normalizeModelFolder(_ folder: String) -> String {
+        var s = folder
+        if s.hasPrefix("openai_whisper-") {
+            s = String(s.dropFirst("openai_whisper-".count))
+        }
+        if let range = s.range(of: #"-v\d{8}$"#, options: .regularExpression) {
+            s.removeSubrange(range)
+        }
+        return s
     }
 
     func bestAvailableModel() -> String? {
-        models.first(where: { $0.isDownloaded && $0.isRecommendedDefault })?.name
-            ?? models.first(where: { $0.isDownloaded })?.name
+        // Prefer a model already in the UI list that is detected on disk.
+        if let inList = (models.first(where: { $0.isDownloaded && $0.isRecommendedDefault })
+                         ?? models.first(where: { $0.isDownloaded }))?.name {
+            return inList
+        }
+        // Fallback: scan the on-disk model folders directly (handles the case
+        // where the in-memory list hasn't been refreshed yet).
+        guard let base = modelsBase else { return nil }
+        let root = base.appending(path: "models/argmaxinc/whisperkit-coreml")
+        guard let subdirs = try? FileManager.default.contentsOfDirectory(atPath: root.path) else { return nil }
+        for sub in subdirs {
+            let dir = root.appendingPathComponent(sub)
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            if contents.contains(where: { $0.hasSuffix(".mlmodelc") || $0.hasSuffix(".mlpackage") }) {
+                return normalizeModelFolder(sub)
+            }
+        }
+        return nil
     }
 
     func refresh() async {

@@ -3,16 +3,22 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="Media Summarizer"
+APP_NAME="Meeting Transcriber"
 APP_DIR="$SCRIPT_DIR/$APP_NAME.app"
 BUNDLE_EXECUTABLE="MeetingTranscriber"
 BUNDLE_ID="com.wasim.media-summarizer"
+
+# Prefer a full Xcode toolchain if one is present — the Command Line Tools SDK
+# can fail release builds in some environments.
+if [ -z "$DEVELOPER_DIR" ] && compgen -G "/Applications/Xcode*.app" >/dev/null; then
+  export DEVELOPER_DIR="$(ls -d /Applications/Xcode*.app 2>/dev/null | head -n1)/Contents/Developer"
+fi
 
 cd "$SCRIPT_DIR"
 
 echo ""
 echo "═══════════════════════════════════════════════"
-echo "  Building Media Summarizer (native Swift)"
+echo "  Building Meeting Transcriber (native Swift)"
 echo "═══════════════════════════════════════════════"
 echo ""
 
@@ -50,7 +56,7 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>   <string>APPL</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSPrincipalClass</key>      <string>NSApplication</string>
     <key>NSSupportsAutomaticTermination</key><false/>
     <key>NSSupportsSuddenTermination</key><false/>

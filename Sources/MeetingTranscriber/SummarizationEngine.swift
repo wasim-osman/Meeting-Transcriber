@@ -27,6 +27,11 @@ enum SummaryMode: String, CaseIterable, Identifiable {
         case .all:           "All"
         }
     }
+
+    // The three real summary styles (excludes the legacy .all aggregate).
+    static var realCases: [SummaryMode] {
+        [.succinct, .contemporary, .comprehensive]
+    }
 }
 
 // ── Prompts ────────────────────────────────────────────────────────────────────
@@ -66,7 +71,6 @@ private func buildPrompt(mode: SummaryMode, transcript: String) -> String {
 
     ## Next Steps / Follow-up
     - Item (or "None noted")\(extraSection)
-
     ---
     Transcript:
 
@@ -86,41 +90,28 @@ Segment:
 private let DIRECT_CHARS = 6_000
 private let CHUNK_CHARS  = 5_500
 
-@available(macOS 26.0, *)
 enum SummarizationEngine {
 
     static func isAvailable() -> Bool {
         SystemLanguageModel.default.availability == .available
     }
 
-    // Streams tokens to onToken; calls onProgress for status text;
-    // calls onModeProgress(0.0…1.0) to advance the progress bar.
+    // Generates all three summary styles (succinct, contemporary, comprehensive)
+    // and returns them keyed by mode, while streaming tokens to onToken so the
+    // UI can show a live preview. The caller picks which mode to display.
     static func summarize(
         transcript: String,
-        mode: SummaryMode,
         onProgress: @MainActor @escaping (String) -> Void,
         onToken: @MainActor @escaping (String) -> Void,
         onModeProgress: @MainActor @escaping (Double) -> Void
-    ) async throws -> String {
+    ) async throws -> [SummaryMode: String] {
 
-        guard mode != .all else {
-            return try await summarizeAll(
-                transcript: transcript,
-                onProgress: onProgress,
-                onToken: onToken,
-                onModeProgress: onModeProgress
-            )
-        }
-        let result = try await summarizeSingle(
+        try await summarizeAll(
             transcript: transcript,
-            mode: mode,
             onProgress: onProgress,
             onToken: onToken,
-            onModeProgress: onModeProgress,
-            progressBase: 0, progressScale: 1.0
+            onModeProgress: onModeProgress
         )
-        await onModeProgress(1.0)
-        return result
     }
 
     // ── "All Versions" path ───────────────────────────────────────────────────
@@ -130,16 +121,16 @@ enum SummarizationEngine {
         onProgress: @MainActor @escaping (String) -> Void,
         onToken: @MainActor @escaping (String) -> Void,
         onModeProgress: @MainActor @escaping (Double) -> Void
-    ) async throws -> String {
+    ) async throws -> [SummaryMode: String] {
         let modes: [SummaryMode] = [.succinct, .contemporary, .comprehensive]
-        var parts: [String] = []
+        var result: [SummaryMode: String] = [:]
 
         for (i, m) in modes.enumerated() {
             try Task.checkCancellation()
             let base  = Double(i) / 3.0
             let scale = 1.0 / 3.0
 
-            // Emit the section header as streamed tokens
+            // Emit the section header as streamed tokens (live preview only)
             let divider = sectionDivider(for: m)
             await onToken(divider)
 
@@ -152,14 +143,14 @@ enum SummarizationEngine {
                 progressBase: base,
                 progressScale: scale
             )
-            parts.append(divider + part)
+            result[m] = part
 
             if i < modes.count - 1 {
                 await onToken("\n\n")
             }
             await onModeProgress(Double(i + 1) / 3.0)
         }
-        return parts.joined(separator: "\n\n")
+        return result
     }
 
     // ── Single-mode path ──────────────────────────────────────────────────────
@@ -174,7 +165,8 @@ enum SummarizationEngine {
         progressScale: Double
     ) async throws -> String {
         if transcript.count <= DIRECT_CHARS {
-            return try await directSummarize(transcript: transcript, mode: mode, onToken: onToken)
+            return try await directSummarize(transcript: transcript, mode: mode,
+                                             onToken: onToken)
         }
         return try await chunkedSummarize(
             transcript: transcript,
@@ -225,7 +217,8 @@ enum SummarizationEngine {
             ? String(combined.prefix(DIRECT_CHARS)) + "\n[truncated]"
             : combined
         let synInput = "Condensed notes from a long meeting (\(total) segments):\n\n" + capped
-        return try await directSummarize(transcript: synInput, mode: mode, onToken: onToken)
+        return try await directSummarize(transcript: synInput, mode: mode,
+                                         onToken: onToken)
     }
 
     // ── Streaming helper ──────────────────────────────────────────────────────

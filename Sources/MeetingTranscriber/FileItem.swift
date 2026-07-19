@@ -12,7 +12,7 @@ final class FileItem: Identifiable, ObservableObject {
 
         var label: String {
             switch self {
-            case .pending:            return "⏳  Pending"
+            case .pending:            return ""
             case .processing(let s): return s
             case .done:               return "✅  Transcribed"
             case .failed(let e):      return "❌  \(e.prefix(60))"

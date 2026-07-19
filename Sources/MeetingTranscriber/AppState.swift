@@ -37,13 +37,36 @@ final class AppState: ObservableObject {
     @Published var summaryProgress: Double = 0
     @Published var selectedTab: Int = 0
     @Published var appleIntelligenceUnavailableReason: String? = nil
+    @Published var summarizationAvailable: Bool = false
 
     // Persisted across launches via UserDefaults
     @Published var summaryMode: SummaryMode = {
-        SummaryMode(rawValue: UserDefaults.standard.string(forKey: "summaryMode") ?? "") ?? .contemporary
+        let stored = UserDefaults.standard.string(forKey: "summaryMode") ?? ""
+        let mode = SummaryMode(rawValue: stored) ?? .contemporary
+        // The legacy ".all" aggregate is no longer a selectable style.
+        return mode == .all ? .contemporary : mode
     }() {
-        didSet { UserDefaults.standard.set(summaryMode.rawValue, forKey: "summaryMode") }
+        didSet {
+            UserDefaults.standard.set(summaryMode.rawValue, forKey: "summaryMode")
+            // Reflect the newly selected mode in the displayed text.
+            if let text = summaryModes[summaryMode], !text.isEmpty {
+                summary = text
+            }
+        }
     }
+
+    // All three generated summary styles, keyed by mode.
+    @Published var summaryModes: [SummaryMode: String] = [:]
+    var summaryReady: Bool { !summaryModes.isEmpty }
+
+    /// The text shown in the Summary tab. Prefers `summary`, but falls back to the
+    /// generated mode content so the view never renders blank when a summary exists.
+    var displayedSummary: String {
+        if !summary.isEmpty { return summary }
+        if let t = summaryModes[summaryMode], !t.isEmpty { return t }
+        return summaryModes.first(where: { !$0.value.isEmpty })?.value ?? ""
+    }
+    var summaryIsReady: Bool { !displayedSummary.isEmpty }
 
     var isBusy: Bool { isTranscribing || isSummarizing }
 
@@ -140,7 +163,7 @@ final class AppState: ObservableObject {
         panel.canCreateDirectories = true
         panel.showsTagField = false
         panel.prompt = "Export"
-        panel.nameFieldStringValue = "Media Summary \(fileStamp).\(format.ext)"
+        panel.nameFieldStringValue = "Meeting Transcriber Summary \(fileStamp).\(format.ext)"
         panel.title = "Export Summary — \(format.rawValue)"
 
         let capturedSummary = summary
@@ -173,31 +196,75 @@ final class AppState: ObservableObject {
         <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>Media Summary</title>
+        <title>Meeting Transcriber — Summary</title>
         <style>
-          body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a1a1a;line-height:1.6}
-          .meta{color:#888;font-size:.85em;margin-bottom:2em}
-          h1{font-size:1.8em}
-          h2{margin-top:1.8em;padding-left:12px;border-left:4px solid}
-          ul{padding-left:1.4em}li{margin:4px 0}
-          hr{border:none;border-top:1px solid #e5e7eb;margin:20px 0}
-          pre{font-family:monospace;background:#f3f4f6;padding:12px;border-radius:6px;overflow-x:auto}
-          .ck{text-decoration:line-through;color:#888}
+          :root{
+            --bg:#ffffff; --fg:#1f2430; --muted:#6b7280; --card:#f6f7f9;
+            --border:#e5e7eb; --code:#f3f4f6; --accent:#2563eb;
+          }
+          :root[data-theme="dark"]{
+            --bg:#0f141b; --fg:#e6e9ef; --muted:#94a3b8; --card:#161c25;
+            --border:#283241; --code:#11161d; --accent:#60a5fa;
+          }
+          @media (prefers-color-scheme: dark){
+            :root:not([data-theme="light"]){ --bg:#0f141b; --fg:#e6e9ef; --muted:#94a3b8; --card:#161c25; --border:#283241; --code:#11161d; --accent:#60a5fa; }
+          }
+          *{box-sizing:border-box}
+          body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--fg);max-width:820px;margin:48px auto;padding:0 24px;line-height:1.65;transition:background .25s,color .25s}
+          .toolbar{position:sticky;top:0;display:flex;justify-content:flex-end;padding:10px 0;background:var(--bg);z-index:10}
+          .toggle{cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:999px;padding:6px 14px;font-size:.82rem;display:inline-flex;gap:7px;align-items:center;transition:background .2s,border-color .2s}
+          .toggle:hover{border-color:var(--accent)}
+          .meta{color:var(--muted);font-size:.85rem;margin:0 0 2.2em;letter-spacing:.02em}
+          h1{font-size:1.9rem;line-height:1.2;margin:.2em 0 0.6em}
+          h2{margin-top:1.9em;padding-left:13px;border-left:4px solid var(--accent);font-size:1.25rem}
+          p{margin:.7em 0}
+          ul{padding-left:1.4em;margin:.6em 0}li{margin:.35em 0}
+          hr{border:none;border-top:1px solid var(--border);margin:28px 0}
+          pre{font-family:'SF Mono',ui-monospace,Menlo,monospace;background:var(--code);padding:14px 16px;border-radius:8px;overflow-x:auto;border:1px solid var(--border);font-size:.85rem;line-height:1.5}
+          code{font-family:'SF Mono',ui-monospace,Menlo,monospace;background:var(--code);padding:1px 6px;border-radius:5px;font-size:.88em}
+          .ck{text-decoration:line-through;color:var(--muted)}
+          .banner{font-family:'SF Mono',ui-monospace,Menlo,monospace;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 16px;overflow-x:auto;white-space:pre;font-size:.82rem;color:var(--muted)}
+          a{color:var(--accent)}
         </style>
         </head>
         <body>
-        <p class="meta">Exported: \(esc(date))</p>
+        <div class="toolbar">
+          <button class="toggle" id="themeBtn" onclick="toggleTheme()" aria-label="Toggle light or dark theme">
+            <span id="themeIcon">🌙</span><span id="themeLabel">Dark</span>
+          </button>
+        </div>
+        <p class="meta">Meeting Transcriber &middot; Exported \(esc(date))</p>
+        <script>
+          (function(){
+            var saved = localStorage.getItem('mt-theme');
+            if(saved){ document.documentElement.setAttribute('data-theme', saved); }
+            syncLabel();
+          })();
+          function toggleTheme(){
+            var cur = document.documentElement.getAttribute('data-theme');
+            var next = (cur === 'dark') ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('mt-theme', next);
+            syncLabel();
+          }
+          function syncLabel(){
+            var cur = document.documentElement.getAttribute('data-theme');
+            var dark = (cur === 'dark') || (!cur && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.getElementById('themeIcon').textContent = dark ? '☀️' : '🌙';
+            document.getElementById('themeLabel').textContent = dark ? 'Light' : 'Dark';
+          }
+        </script>
         """
         var h2Idx = 0
         var inList = false
         func closeList() { if inList { html += "</ul>\n"; inList = false } }
         for line in text.components(separatedBy: "\n") {
             if line.hasPrefix("╔") || line.hasPrefix("║") || line.hasPrefix("╚") {
-                closeList(); html += "<pre>\(esc(line))</pre>\n"
+                closeList(); html += "<div class=\"banner\">\(esc(line))</div>\n"
             } else if line.hasPrefix("## ") {
                 closeList()
                 let c = hColors[h2Idx % hColors.count]; h2Idx += 1
-                html += "<h2 style=\"color:\(c);border-left-color:\(c)\">\(esc(String(line.dropFirst(3))))</h2>\n"
+                html += "<h2 style=\"border-left-color:\(c)\">\(esc(String(line.dropFirst(3))))</h2>\n"
             } else if line.hasPrefix("# ") {
                 closeList(); html += "<h1>\(esc(String(line.dropFirst(2))))</h1>\n"
             } else if line.hasPrefix("- [ ] ") || line.hasPrefix("* [ ] ") {
@@ -285,7 +352,7 @@ final class AppState: ObservableObject {
     private func runTranscription() async {
         let activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep, .suddenTerminationDisabled],
-            reason: "Media Summarizer: transcribing audio"
+            reason: "Meeting Transcriber: transcribing audio"
         )
         defer {
             ProcessInfo.processInfo.endActivity(activity)
@@ -337,6 +404,7 @@ final class AppState: ObservableObject {
                 let outURL = item.url.deletingPathExtension().appendingPathExtension("transcript.txt")
                 try? text.write(to: outURL, atomically: true, encoding: .utf8)
                 item.transcript = text; item.status = .done
+
                 let sep   = String(repeating: "═", count: 60)
                 let block = "\(sep)\n\(item.name)\n\(sep)\n\n\(text)"
                 transcript = transcript.isEmpty ? block : transcript + "\n\n" + block
@@ -357,14 +425,30 @@ final class AppState: ObservableObject {
 
     // ── Summarization implementation ──────────────────────────────────────────
 
+    /// Checks Apple Intelligence availability up front so the UI can disable the
+    /// Summary button and surface a banner *before* the user starts a run.
+    func refreshSummarizationAvailability() {
+        summarizationAvailable = SummarizationEngine.isAvailable()
+        if summarizationAvailable {
+            appleIntelligenceUnavailableReason = nil
+        } else {
+            let model = SystemLanguageModel.default
+            if case .unavailable(let reason) = model.availability {
+                appleIntelligenceUnavailableReason = "Apple Intelligence not available: \(reason)"
+            } else {
+                appleIntelligenceUnavailableReason = "Apple Intelligence is not available on this Mac."
+            }
+        }
+    }
+
     private func runSummary() async {
         defer {
             Task { @MainActor [weak self] in
                 self?.isSummarizing = false; self?.summaryTask = nil
             }
         }
-        guard #available(macOS 26.0, *) else {
-            appleIntelligenceUnavailableReason = "Requires macOS 26 or later."
+        guard SummarizationEngine.isAvailable() else {
+            refreshSummarizationAvailability()
             return
         }
         let model = SystemLanguageModel.default
@@ -376,42 +460,60 @@ final class AppState: ObservableObject {
         }
         let activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep],
-            reason: "Media Summarizer: generating summary"
+            reason: "Meeting Transcriber: generating summary"
         )
         defer { ProcessInfo.processInfo.endActivity(activity) }
 
-        statusMessage = "Generating \(summaryMode.rawValue) summary…"
-        let capturedMode = summaryMode
-        let capturedTranscript = transcript
+        statusMessage = "Generating summaries…"
+        let capturedMode: SummaryMode = summaryMode == .all ? .contemporary : summaryMode
+        let capturedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !capturedTranscript.isEmpty else {
+            statusMessage = "No transcript yet — run Transcribe first."
+            return
+        }
 
         do {
-            let full = try await SummarizationEngine.summarize(
+            // Generate all three modes; stream the live combined text while
+            // building, then switch the view to the selected mode on completion.
+            summary = ""
+            let all = try await SummarizationEngine.summarize(
                 transcript: capturedTranscript,
-                mode: capturedMode,
                 onProgress: { [weak self] msg in self?.statusMessage = msg },
-                onToken: { [weak self] tok in self?.summary += tok },
+                onToken: { [weak self] tok in
+                    guard let self else { return }
+                    self.summary += tok
+                    self.objectWillChange.send()
+                },
                 onModeProgress: { [weak self] p in self?.summaryProgress = p }
             )
             summaryProgress = 1.0
+            summaryModes = all
+            // Prefer the selected mode; fall back to any generated text (or the
+            // streamed preview) so the view is never left blank.
+            summary = all[capturedMode]
+                ?? all.values.first
+                ?? summary
 
-            // Auto-save as .md next to source file (with timestamp)
+            // Auto-save each mode as its own .md next to the source file.
             if let firstURL = fileItems.first?.url {
                 let fileFmt = DateFormatter()
                 fileFmt.dateFormat = "yyyy-MM-dd_HH-mm"
                 let stamp = fileFmt.string(from: Date())
-                let stem  = capturedMode.rawValue.lowercased().replacingOccurrences(of: " ", with: "_")
-                let outURL = firstURL.deletingPathExtension()
-                    .appendingPathExtension("\(stem)_summary_\(stamp).md")
                 let readFmt = DateFormatter()
                 readFmt.dateFormat = "MMMM d, yyyy 'at' h:mm a"
-                let content = "*Exported: \(readFmt.string(from: Date()))*\n\n" + full
-                try? content.write(to: outURL, atomically: true, encoding: .utf8)
-                statusMessage = "Saved → \(outURL.lastPathComponent)"
+                for (mode, text) in all {
+                    let stem = mode.rawValue.lowercased().replacingOccurrences(of: " ", with: "_")
+                    let outURL = firstURL.deletingPathExtension()
+                        .appendingPathExtension("\(stem)_summary_\(stamp).md")
+                    let content = "*Exported: \(readFmt.string(from: Date()))*\n\n" + text
+                    try? content.write(to: outURL, atomically: true, encoding: .utf8)
+                }
+                statusMessage = "Saved summaries → \(firstURL.deletingPathExtension().lastPathComponent)_*_summary_\(stamp).md"
             }
-        } catch is CancellationError {
-            statusMessage = "Summary cancelled."; summaryProgress = 0
-        } catch {
-            statusMessage = "Summary error: \(error.localizedDescription)"
+            } catch is CancellationError {
+                statusMessage = "Summary cancelled."; summaryProgress = 0
+            } catch {
+                statusMessage = "Summary error: \(error.localizedDescription)"
+            }
         }
-    }
 }

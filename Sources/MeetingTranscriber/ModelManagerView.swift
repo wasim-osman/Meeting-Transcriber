@@ -5,62 +5,67 @@ struct ModelManagerView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
 
-            // ── Header ────────────────────────────────────────────────────────
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Whisper Models")
-                        .font(.title2.bold())
-                    Text("Models are stored inside the app bundle. Deleting the app removes them automatically.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                // ── Header ────────────────────────────────────────────────────
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Whisper Models")
+                            .font(.title2.bold())
+                        Text("Models are stored inside the app bundle. Deleting the app removes them automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Done") { dismiss() }
+                        .buttonStyle(.borderedProminent)
                 }
-                Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding([.horizontal, .top], 18)
-            .padding(.bottom, 12)
+                .padding([.horizontal, .top], 18)
+                .padding(.bottom, 12)
 
-            Divider()
+                Divider()
 
-            // ── Model list ────────────────────────────────────────────────────
-            if modelManager.isLoading {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading available models…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(40)
-            } else if modelManager.models.isEmpty {
-                Text("No models found for this device.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                // ── Whisper model list ─────────────────────────────────────────
+                if modelManager.isLoading {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading available models…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(40)
-            } else {
-                List(modelManager.models) { model in
-                    ModelRowView(model: model, modelManager: modelManager)
+                } else if modelManager.models.isEmpty {
+                    Text("No models found for this device.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(40)
+                } else {
+                    List(modelManager.models) { model in
+                        ModelRowView(model: model, modelManager: modelManager)
+                    }
+                    .listStyle(.inset)
+                    .frame(height: 180)
                 }
-                .listStyle(.inset)
-            }
 
-            // ── Status bar ────────────────────────────────────────────────────
-            if !modelManager.statusMessage.isEmpty {
-                Divider()
-                Text(modelManager.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 8)
+                // ── Whisper status bar ──────────────────────────────────────────
+                if !modelManager.statusMessage.isEmpty {
+                    Divider()
+                    Text(modelManager.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 8)
+                }
             }
         }
-        .frame(width: 540, height: 400)
-        .task { await modelManager.refresh() }
+        .frame(width: 560, height: 460)
+        .task {
+            await modelManager.refresh()
+        }
     }
 }
 

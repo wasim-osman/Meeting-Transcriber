@@ -1,16 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 // ─── Glass-panel modifier ──────────────────────────────────────────────────────
 private struct GlassPanelModifier: ViewModifier {
     var cornerRadius: CGFloat = 14
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        } else {
-            content.background(.regularMaterial,
-                               in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        }
+        content.glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 
@@ -24,6 +20,7 @@ private extension View {
 struct DropZoneView: View {
     @Binding var isTargeted: Bool
     var onDrop: ([URL]) -> Void
+    var onBrowse: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -39,7 +36,7 @@ struct DropZoneView: View {
                     .font(.system(size: 34))
                     .foregroundStyle(isTargeted ? Color.accentColor : .secondary)
                     .symbolEffect(.pulse, isActive: isTargeted)
-                Text("Drop audio or video files here")
+                Text("Click or drop audio / video files here")
                     .font(.headline)
                     .foregroundStyle(isTargeted ? Color.accentColor : .primary)
                 Text("MP3  ·  MP4  ·  M4A  ·  WAV  ·  MKV  ·  MOV  ·  FLAC")
@@ -48,7 +45,9 @@ struct DropZoneView: View {
             }
         }
         .frame(height: 112)
+        .contentShape(Rectangle())
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isTargeted)
+        .onTapGesture { onBrowse() }
         .onDrop(of: ["public.file-url"], isTargeted: $isTargeted) { providers in
             var urls: [URL] = []
             let group = DispatchGroup()
@@ -163,7 +162,7 @@ private struct ResourceGauge: View {
 
 // ─── Main Content ─────────────────────────────────────────────────────────────
 struct ContentView: View {
-    @StateObject private var state   = AppState()
+    @ObservedObject var state: AppState
     @StateObject private var monitor = SystemMonitor()
     @State private var isDropTargeted  = false
     @State private var showModelManager = false
@@ -189,7 +188,9 @@ struct ContentView: View {
                 }
 
                 // ── Drop zone ────────────────────────────────────────────────
-                DropZoneView(isTargeted: $isDropTargeted) { state.addFiles($0) }
+                DropZoneView(isTargeted: $isDropTargeted,
+                             onDrop: { state.addFiles($0) },
+                             onBrowse: browseFiles)
 
                 // ── Queue panel ───────────────────────────────────────────────
                 VStack(spacing: 0) {
@@ -236,10 +237,10 @@ struct ContentView: View {
                     // Row 1 — Transcribe + Process Summary side by side
                     HStack(spacing: 10) {
                         // Transcribe button
-                        Button { state.toggleTranscription() } label: {
+                         Button { state.toggleTranscription() } label: {
                             Label(state.isTranscribing ? "Stop" : "Transcribe",
                                   systemImage: state.isTranscribing ? "stop.fill" : "mic.fill")
-                                .frame(minWidth: 130)
+                                .frame(minWidth: 150)
                         }
                         .controlSize(.large)
                         .buttonStyle(.borderedProminent)
@@ -251,27 +252,31 @@ struct ContentView: View {
                         Button { state.toggleSummary() } label: {
                             Label(state.isSummarizing ? "Stop" : "Process Summary",
                                   systemImage: state.isSummarizing ? "stop.fill" : "sparkles")
-                                .frame(minWidth: 155)
+                                .frame(minWidth: 150)
                         }
                         .controlSize(.large)
                         .buttonStyle(.borderedProminent)
                         .tint(state.isSummarizing ? .red : .purple)
-                        .disabled(state.isTranscribing || (!state.isSummarizing && !state.hasTranscripts))
+                        .disabled(state.isTranscribing || !state.summarizationAvailable || (!state.isSummarizing && !state.hasTranscripts))
                         .animation(.easeInOut(duration: 0.15), value: state.isSummarizing)
 
                         Spacer()
                     }
 
-                    // Row 2 — Mode picker sits below Transcribe button
+                    // Row 2 — Summary style picker (switch between the three generated styles)
                     HStack(spacing: 10) {
+                        Text("Summary style")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 120, alignment: .leading)
                         Picker("", selection: $state.summaryMode) {
-                            ForEach(SummaryMode.allCases) { mode in
+                            ForEach(SummaryMode.realCases) { mode in
                                 Label(mode.rawValue, systemImage: mode.icon).tag(mode)
                             }
                         }
-                        .pickerStyle(.menu)
-                        .fixedSize()
-                        .disabled(state.isBusy)
+                        .pickerStyle(.segmented)
+                        .disabled(state.isBusy || !state.summaryReady)
+                        .help(state.summaryReady ? "Switch between generated summary styles" : "Summaries are generated when you run the pipeline")
 
                         Spacer()
                     }
@@ -285,7 +290,7 @@ struct ContentView: View {
                         .transition(.opacity.combined(with: .push(from: .top)))
                 }
                 if state.isSummarizing {
-                    ProgressRow(label: "Generating \(state.summaryMode.rawValue) summary…",
+                    ProgressRow(label: "Generating summaries…",
                                 value: state.summaryProgress,
                                 tint: .purple)
                         .transition(.opacity.combined(with: .push(from: .top)))
@@ -346,21 +351,21 @@ struct ContentView: View {
                         // Summary tab
                         ZStack(alignment: .topTrailing) {
                             ScrollView {
-                                if state.summary.isEmpty {
+                                if state.summaryIsReady {
+                                    FormattedSummaryView(text: state.displayedSummary, fontSize: fontSize)
+                                        .padding(14)
+                                        .textSelection(.enabled)
+                                } else {
                                     Text("Summary will appear here…")
                                         .foregroundStyle(.tertiary)
                                         .font(.system(size: fontSize))
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(14)
-                                } else {
-                                    FormattedSummaryView(text: state.summary, fontSize: fontSize)
-                                        .padding(14)
-                                        .textSelection(.enabled)
                                 }
                             }
 
                             // Export menu — floats top-right when summary is ready
-                            if !state.summary.isEmpty {
+                            if state.summaryIsReady {
                                 Menu {
                                     ForEach(ExportFormat.allCases, id: \.self) { fmt in
                                         Button {
@@ -411,7 +416,10 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.2), value: state.isTranscribing)
         .animation(.easeInOut(duration: 0.2), value: state.isSummarizing)
         .animation(.easeInOut(duration: 0.2), value: state.isBusy)
-        .task { await state.modelManager.refresh() }
+        .task {
+            await state.modelManager.refresh()
+            state.refreshSummarizationAvailability()
+        }
         .onChange(of: state.isBusy) { _, busy in
             if busy { monitor.start() } else { monitor.stop() }
         }
@@ -424,14 +432,19 @@ struct ContentView: View {
         .sheet(isPresented: $showModelManager) {
             ModelManagerView(modelManager: state.modelManager)
         }
-        .alert("Apple Intelligence Unavailable",
-               isPresented: .init(
-                get: { state.appleIntelligenceUnavailableReason != nil },
-                set: { if !$0 { state.appleIntelligenceUnavailableReason = nil } }
-               )) {
-            Button("OK") { state.appleIntelligenceUnavailableReason = nil }
-        } message: {
-            Text(state.appleIntelligenceUnavailableReason ?? "")
+    }
+
+    // Opens a native file picker and adds the chosen files to the queue.
+    private func browseFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.showsHiddenFiles = false
+        panel.prompt = "Add"
+        panel.message = "Select audio or video meeting files"
+        if panel.runModal() == .OK {
+            state.addFiles(panel.urls)
         }
     }
 }

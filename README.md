@@ -24,7 +24,7 @@ Apple Intelligence.
 ## Download
 
 Grab the latest **`Meeting Transcriber.dmg`** from the
-[Releases](https://github.com/harmlessparasite/Meeting-Transcriber/releases) page,
+[Releases](https://github.com/wasim-osman/Meeting-Transcriber/releases) page,
 open it, and drag **Meeting Transcriber** to your `Applications` folder.
 
 The first time you click **Transcribe**, the app downloads the Whisper model you

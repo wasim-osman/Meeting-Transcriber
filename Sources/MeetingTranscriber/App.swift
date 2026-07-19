@@ -9,7 +9,7 @@ struct MeetingTranscriberApp: App {
             NavigationStack {
                 ContentView(state: state)
                     .navigationTitle("Meeting Transcriber")
-                    .navigationSubtitle("By HarmlessParasite")
+                    .navigationSubtitle("By Wasim Osman")
             }
             .frame(minWidth: 820, minHeight: 700)
         .task {
